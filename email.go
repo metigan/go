@@ -1,109 +1,132 @@
 package metigan
 
 import (
-	"encoding/base64"
-	"fmt"
+	"context"
+	"net/http"
+	"net/url"
 )
 
-// EmailService handles email operations
+// EmailService sends emails. Get it with Client.Email.
 type EmailService struct {
 	client *Client
 }
 
-// SendEmail sends an email
-func (s *EmailService) SendEmail(options EmailOptions) (*EmailSuccessResponse, error) {
-	// Validate required fields
-	if options.From == "" {
-		return nil, &ValidationError{Message: "from field is required", Field: "from"}
+// SendEmail queues an email to every recipient (POST /api/email/send).
+func (s *EmailService) SendEmail(ctx context.Context, options EmailOptions) (*SendEmailResponse, error) {
+	if err := required("from", options.From); err != nil {
+		return nil, err
 	}
 	if len(options.Recipients) == 0 {
-		return nil, &ValidationError{Message: "at least one recipient is required", Field: "recipients"}
+		return nil, &ValidationError{Field: "recipients", Message: "at least one recipient is required"}
 	}
-	if options.Subject == "" {
-		return nil, &ValidationError{Message: "subject is required", Field: "subject"}
+	if err := required("subject", options.Subject); err != nil {
+		return nil, err
 	}
-	if options.Content == "" {
-		return nil, &ValidationError{Message: "content is required", Field: "content"}
+	if err := required("content", options.Content); err != nil {
+		return nil, err
 	}
+	return s.send(ctx, options, nil)
+}
 
-	// Process attachments - encode to base64
-	processedAttachments := make([]map[string]interface{}, len(options.Attachments))
-	for i, att := range options.Attachments {
-		processedAttachments[i] = map[string]interface{}{
-			"content":     base64.StdEncoding.EncodeToString(att.Content),
-			"filename":    att.Filename,
-			"contentType": att.ContentType,
+// SendEmailWithTemplate queues one of your templates to every recipient.
+// Variables fill {{name}} placeholders; options.Subject and
+// options.Content may be left empty (the template provides them).
+func (s *EmailService) SendEmailWithTemplate(ctx context.Context, templateID string, variables map[string]any, options EmailOptions) (*SendEmailResponse, error) {
+	if err := required("templateId", templateID); err != nil {
+		return nil, err
+	}
+	if err := required("from", options.From); err != nil {
+		return nil, err
+	}
+	if len(options.Recipients) == 0 {
+		return nil, &ValidationError{Field: "recipients", Message: "at least one recipient is required"}
+	}
+	return s.send(ctx, options, &templateFields{UseTemplate: "true", TemplateID: templateID, Variables: variables})
+}
+
+type templateFields struct {
+	UseTemplate string         `json:"useTemplate"`
+	TemplateID  string         `json:"templateId"`
+	Variables   map[string]any `json:"variables,omitempty"`
+}
+
+func (s *EmailService) send(ctx context.Context, options EmailOptions, tpl *templateFields) (*SendEmailResponse, error) {
+	if options.IdempotencyKey == "" {
+		options.IdempotencyKey = newIdempotencyKey()
+	}
+	var body any = options
+	if tpl != nil {
+		body = struct {
+			EmailOptions
+			templateFields
+		}{options, *tpl}
+	}
+	var out SendEmailResponse
+	if err := s.client.do(ctx, http.MethodPost, "/api/email/send", nil, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SendOTP sends a one-time code (POST /api/otp/send).
+func (s *EmailService) SendOTP(ctx context.Context, options OTPOptions) (*QueuedEmail, error) {
+	if err := required("to", options.To); err != nil {
+		return nil, err
+	}
+	if err := required("from", options.From); err != nil {
+		return nil, err
+	}
+	if err := required("code", options.Code); err != nil {
+		return nil, err
+	}
+	if options.IdempotencyKey == "" {
+		options.IdempotencyKey = newIdempotencyKey()
+	}
+	var out QueuedEmail
+	if err := s.client.do(ctx, http.MethodPost, "/api/otp/send", nil, options, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SendTransactional sends a single transactional message
+// (POST /api/transactional/send).
+func (s *EmailService) SendTransactional(ctx context.Context, options TransactionalOptions) (*QueuedEmail, error) {
+	if err := required("to", options.To); err != nil {
+		return nil, err
+	}
+	if err := required("from", options.From); err != nil {
+		return nil, err
+	}
+	if options.TemplateID == "" {
+		if err := required("subject", options.Subject); err != nil {
+			return nil, err
+		}
+		if err := required("html", options.HTML); err != nil {
+			return nil, err
 		}
 	}
-
-	// Prepare request body
-	requestBody := map[string]interface{}{
-		"from":       options.From,
-		"recipients": options.Recipients,
-		"subject":    options.Subject,
-		"content":    options.Content,
+	if options.IdempotencyKey == "" {
+		options.IdempotencyKey = newIdempotencyKey()
 	}
-
-	if len(processedAttachments) > 0 {
-		requestBody["attachments"] = processedAttachments
-	}
-	if len(options.CC) > 0 {
-		requestBody["cc"] = options.CC
-	}
-	if len(options.BCC) > 0 {
-		requestBody["bcc"] = options.BCC
-	}
-	if options.ReplyTo != "" {
-		requestBody["replyTo"] = options.ReplyTo
-	}
-	if options.TrackingID != "" {
-		requestBody["trackingId"] = options.TrackingID
-	}
-
-	// Make request
-	resp, err := s.client.makeRequest("POST", "/emails", requestBody)
-	if err != nil {
+	var out QueuedEmail
+	if err := s.client.do(ctx, http.MethodPost, "/api/transactional/send", nil, options, &out); err != nil {
 		return nil, err
 	}
-
-	var result EmailSuccessResponse
-	if err := s.client.parseResponse(resp, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
+	return &out, nil
 }
 
-// SendEmailWithTemplate sends an email using a template
-func (s *EmailService) SendEmailWithTemplate(templateID string, variables map[string]interface{}, options EmailOptions) (*EmailSuccessResponse, error) {
-	if templateID == "" {
-		return nil, &ValidationError{Message: "template ID is required", Field: "templateId"}
-	}
-
-	requestBody := map[string]interface{}{
-		"templateId": templateID,
-		"variables":  variables,
-		"from":       options.From,
-		"recipients": options.Recipients,
-	}
-
-	if options.Subject != "" {
-		requestBody["subject"] = options.Subject
-	}
-	if options.ReplyTo != "" {
-		requestBody["replyTo"] = options.ReplyTo
-	}
-
-	resp, err := s.client.makeRequest("POST", fmt.Sprintf("/emails/templates/%s", templateID), requestBody)
-	if err != nil {
+// Get returns the delivery status of an email, by the EmailID a send
+// returned (GET /api/email/{emailId}).
+func (s *EmailService) Get(ctx context.Context, emailID string) (*EmailStatus, error) {
+	if err := required("emailId", emailID); err != nil {
 		return nil, err
 	}
-
-	var result EmailSuccessResponse
-	if err := s.client.parseResponse(resp, &result); err != nil {
+	var out struct {
+		Data EmailStatus `json:"data"`
+	}
+	if err := s.client.do(ctx, http.MethodGet, "/api/email/"+url.PathEscape(emailID), nil, nil, &out); err != nil {
 		return nil, err
 	}
-
-	return &result, nil
+	return &out.Data, nil
 }
-

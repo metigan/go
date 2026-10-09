@@ -1,60 +1,33 @@
 package metigan
 
 import (
-	"fmt"
+	"context"
+	"net/http"
+	"net/url"
 )
 
-// TemplatesService handles template operations
+// TemplatesService reads email templates. Get it with Client.Templates.
 type TemplatesService struct {
 	client *Client
 }
 
-// Get retrieves a template by ID
-func (s *TemplatesService) Get(templateID string) (*EmailTemplate, error) {
-	if templateID == "" {
-		return nil, &ValidationError{Message: "template ID is required", Field: "templateId"}
-	}
-
-	resp, err := s.client.makeRequest("GET", fmt.Sprintf("/templates/%s", templateID), nil)
-	if err != nil {
+// Get returns a template by ID.
+func (s *TemplatesService) Get(ctx context.Context, templateID string) (*EmailTemplate, error) {
+	if err := required("templateId", templateID); err != nil {
 		return nil, err
 	}
-
-	var template EmailTemplate
-	if err := s.client.parseResponse(resp, &template); err != nil {
+	var out EmailTemplate
+	if err := s.client.do(ctx, http.MethodGet, "/api/templates/"+url.PathEscape(templateID), nil, nil, &out); err != nil {
 		return nil, err
 	}
-
-	return &template, nil
+	return &out, nil
 }
 
-// List lists all templates
-func (s *TemplatesService) List(options PaginationOptions) ([]EmailTemplate, error) {
-	query := "?"
-	if options.Page > 0 {
-		query += fmt.Sprintf("page=%d&", options.Page)
-	}
-	if options.Limit > 0 {
-		query += fmt.Sprintf("limit=%d&", options.Limit)
-	}
-
-	endpoint := "/templates"
-	if query != "?" {
-		endpoint += query[:len(query)-1]
-	}
-
-	resp, err := s.client.makeRequest("GET", endpoint, nil)
-	if err != nil {
+// List returns a page of templates (default 20 per page, at most 100).
+func (s *TemplatesService) List(ctx context.Context, options PaginationOptions) (*TemplateListResponse, error) {
+	var out TemplateListResponse
+	if err := s.client.do(ctx, http.MethodGet, "/api/templates", pageQuery(options), nil, &out); err != nil {
 		return nil, err
 	}
-
-	var result struct {
-		Templates []EmailTemplate `json:"templates"`
-	}
-	if err := s.client.parseResponse(resp, &result); err != nil {
-		return nil, err
-	}
-
-	return result.Templates, nil
+	return &out, nil
 }
-

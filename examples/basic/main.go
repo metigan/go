@@ -1,43 +1,54 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
-	
-	"github.com/metigan/go"
+	"time"
+
+	metigan "github.com/metigan/go"
 )
 
 func main() {
-	// Initialize the client
 	apiKey := os.Getenv("METIGAN_API_KEY")
 	if apiKey == "" {
 		log.Fatal("METIGAN_API_KEY environment variable is required")
 	}
-	
-	client := metigan.NewClient(metigan.Config{
-		APIKey: apiKey,
-	})
-	
-	// Example: Send an email
-	result, err := client.Email().SendEmail(metigan.EmailOptions{
-		From:       "Sender <sender@example.com>",
-		Recipients: []string{"recipient@example.com"},
+	to := os.Getenv("METIGAN_TO")
+	if to == "" {
+		log.Fatal("METIGAN_TO (the recipient) is required")
+	}
+
+	client := metigan.NewClient(metigan.Config{APIKey: apiKey})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// onboarding@metigan.io works on every account without verifying a domain.
+	res, err := client.Email().SendEmail(ctx, metigan.EmailOptions{
+		From:       "Metigan Go SDK <onboarding@metigan.io>",
+		Recipients: []string{to},
 		Subject:    "Hello from Go!",
 		Content:    "<h1>Hello!</h1><p>This email was sent from a Go application.</p>",
 	})
-	
-	if err != nil {
-		log.Fatalf("Failed to send email: %v", err)
+	var apiErr *metigan.APIError
+	if errors.As(err, &apiErr) {
+		log.Fatalf("API refused the email (%d): %s", apiErr.StatusCode, apiErr.Message)
 	}
-	
-	if result.Success {
-		fmt.Println("Email sent successfully!")
-		fmt.Printf("Message: %s\n", result.Message)
-		fmt.Printf("Recipients: %d\n", result.RecipientCount)
-		fmt.Printf("Emails remaining: %d\n", result.EmailsRemaining)
-	} else {
-		fmt.Printf("Failed to send email: %s\n", result.Message)
+	if err != nil {
+		log.Fatalf("send failed: %v", err)
+	}
+
+	fmt.Printf("%s (%d recipient(s), %d emails left this month)\n", res.Message, res.RecipientCount, res.EmailsRemaining)
+	for _, e := range res.SuccessfulEmails {
+		status, err := client.Email().Get(ctx, e.EmailID)
+		if err != nil {
+			log.Fatalf("status of %s: %v", e.EmailID, err)
+		}
+		fmt.Printf("%s -> %s (%s)\n", e.Recipient, status.Status, e.EmailID)
+	}
+	for _, f := range res.FailedEmails {
+		fmt.Printf("%s failed: %s\n", f.Recipient, f.Error)
 	}
 }
-

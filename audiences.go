@@ -1,110 +1,81 @@
 package metigan
 
 import (
-	"fmt"
+	"context"
+	"net/http"
+	"net/url"
 )
 
-// AudiencesService handles audience operations
+// AudiencesService manages audiences. Get it with Client.Audiences.
 type AudiencesService struct {
 	client *Client
 }
 
-// Create creates a new audience
-func (s *AudiencesService) Create(options CreateAudienceOptions) (*Audience, error) {
-	if options.Name == "" {
-		return nil, &ValidationError{Message: "name is required", Field: "name"}
-	}
-
-	resp, err := s.client.makeRequest("POST", "/audiences", options)
-	if err != nil {
-		return nil, err
-	}
-
-	var audience Audience
-	if err := s.client.parseResponse(resp, &audience); err != nil {
-		return nil, err
-	}
-
-	return &audience, nil
+func audiencePath(id, suffix string) string {
+	return "/api/audiences/" + url.PathEscape(id) + suffix
 }
 
-// Get retrieves an audience by ID
-func (s *AudiencesService) Get(audienceID string) (*Audience, error) {
-	if audienceID == "" {
-		return nil, &ValidationError{Message: "audience ID is required", Field: "audienceId"}
-	}
-
-	resp, err := s.client.makeRequest("GET", fmt.Sprintf("/audiences/%s", audienceID), nil)
-	if err != nil {
+// Create creates an audience.
+func (s *AudiencesService) Create(ctx context.Context, options CreateAudienceOptions) (*Audience, error) {
+	if err := required("name", options.Name); err != nil {
 		return nil, err
 	}
-
-	var audience Audience
-	if err := s.client.parseResponse(resp, &audience); err != nil {
+	var out Audience
+	if err := s.client.do(ctx, http.MethodPost, "/api/audiences", nil, options, &out); err != nil {
 		return nil, err
 	}
-
-	return &audience, nil
+	return &out, nil
 }
 
-// List lists audiences with optional pagination
-func (s *AudiencesService) List(options PaginationOptions) (*AudienceListResponse, error) {
-	query := "?"
-	if options.Page > 0 {
-		query += fmt.Sprintf("page=%d&", options.Page)
-	}
-	if options.Limit > 0 {
-		query += fmt.Sprintf("limit=%d&", options.Limit)
-	}
-
-	endpoint := "/audiences"
-	if query != "?" {
-		endpoint += query[:len(query)-1]
-	}
-
-	resp, err := s.client.makeRequest("GET", endpoint, nil)
-	if err != nil {
+// Get returns an audience with its most recent contacts.
+func (s *AudiencesService) Get(ctx context.Context, audienceID string) (*AudienceWithContacts, error) {
+	if err := required("audienceId", audienceID); err != nil {
 		return nil, err
 	}
-
-	var result AudienceListResponse
-	if err := s.client.parseResponse(resp, &result); err != nil {
+	var out AudienceWithContacts
+	if err := s.client.do(ctx, http.MethodGet, audiencePath(audienceID, ""), nil, nil, &out); err != nil {
 		return nil, err
 	}
-
-	return &result, nil
+	return &out, nil
 }
 
-// GetStats retrieves statistics for an audience
-func (s *AudiencesService) GetStats(audienceID string) (*AudienceStats, error) {
-	if audienceID == "" {
-		return nil, &ValidationError{Message: "audience ID is required", Field: "audienceId"}
-	}
-
-	resp, err := s.client.makeRequest("GET", fmt.Sprintf("/audiences/%s/stats", audienceID), nil)
-	if err != nil {
+// List returns a page of audiences, newest first.
+func (s *AudiencesService) List(ctx context.Context, options PaginationOptions) (*AudienceListResponse, error) {
+	var out AudienceListResponse
+	if err := s.client.do(ctx, http.MethodGet, "/api/audiences", pageQuery(options), nil, &out); err != nil {
 		return nil, err
 	}
-
-	var stats AudienceStats
-	if err := s.client.parseResponse(resp, &stats); err != nil {
-		return nil, err
-	}
-
-	return &stats, nil
+	return &out, nil
 }
 
-// Delete deletes an audience
-func (s *AudiencesService) Delete(audienceID string) error {
-	if audienceID == "" {
-		return &ValidationError{Message: "audience ID is required", Field: "audienceId"}
+// Update changes an audience; nil fields are left unchanged.
+func (s *AudiencesService) Update(ctx context.Context, audienceID string, options UpdateAudienceOptions) (*Audience, error) {
+	if err := required("audienceId", audienceID); err != nil {
+		return nil, err
 	}
+	var out Audience
+	if err := s.client.do(ctx, http.MethodPatch, audiencePath(audienceID, ""), nil, options, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
 
-	resp, err := s.client.makeRequest("DELETE", fmt.Sprintf("/audiences/%s", audienceID), nil)
-	if err != nil {
+// Delete removes an audience.
+func (s *AudiencesService) Delete(ctx context.Context, audienceID string) error {
+	if err := required("audienceId", audienceID); err != nil {
 		return err
 	}
-
-	return s.client.parseResponse(resp, nil)
+	return s.client.do(ctx, http.MethodDelete, audiencePath(audienceID, ""), nil, nil, nil)
 }
 
+// GetStats counts an audience's contacts by status.
+func (s *AudiencesService) GetStats(ctx context.Context, audienceID string) (*AudienceStats, error) {
+	if err := required("audienceId", audienceID); err != nil {
+		return nil, err
+	}
+	var out AudienceStats
+	if err := s.client.do(ctx, http.MethodGet, audiencePath(audienceID, "/stats"), nil, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
