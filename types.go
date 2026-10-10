@@ -15,6 +15,10 @@ const (
 	EmailTypeMarketing EmailType = "marketing"
 )
 
+// MaxTransactionalRecipients is the most recipients a transactional send
+// may have; send to more people as marketing.
+const MaxTransactionalRecipients = 5
+
 // Attachment is a file attached to an email. Content is the raw file; the
 // SDK base64-encodes it.
 type Attachment struct {
@@ -41,7 +45,9 @@ type EmailOptions struct {
 	ReplyTo     string       `json:"replyTo,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	// Type is transactional or marketing. Empty: one recipient is
-	// transactional, several are marketing.
+	// transactional, several are marketing. Transactional accepts at most
+	// MaxTransactionalRecipients recipients; each account's first 500 a day
+	// skip the sending-IP warm-up, the rest are paced like marketing.
 	Type        EmailType         `json:"type,omitempty"`
 	TrackOpens  *bool             `json:"trackOpens,omitempty"`
 	TrackClicks *bool             `json:"trackClicks,omitempty"`

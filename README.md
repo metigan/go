@@ -84,6 +84,8 @@ res, err := client.Email().SendEmail(ctx, metigan.EmailOptions{
 })
 ```
 
+Transactional sends accept at most 5 recipients (`metigan.MaxTransactionalRecipients`); for more people use `EmailTypeMarketing`. Each account's first 500 transactional emails a day skip the sending-IP warm-up, the rest are paced like marketing.
+
 A successful response means the emails were **queued**. `res.SuccessfulEmails` has one `EmailID` per recipient, `res.FailedEmails` the ones refused, and `res.Usage` your monthly quota.
 
 Sends are idempotent: the SDK attaches a random `IdempotencyKey` to each call, so its retries never send twice. Set your own key (for example an order ID) to make your application's retries safe too.

@@ -2,6 +2,7 @@ package metigan
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 )
@@ -51,6 +52,10 @@ type templateFields struct {
 }
 
 func (s *EmailService) send(ctx context.Context, options EmailOptions, tpl *templateFields) (*SendEmailResponse, error) {
+	if options.Type == EmailTypeTransactional && len(options.Recipients) > MaxTransactionalRecipients {
+		return nil, &ValidationError{Field: "recipients", Message: fmt.Sprintf(
+			"a transactional send accepts at most %d recipients; use EmailTypeMarketing", MaxTransactionalRecipients)}
+	}
 	if options.IdempotencyKey == "" {
 		options.IdempotencyKey = newIdempotencyKey()
 	}

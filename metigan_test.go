@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -280,5 +281,23 @@ func TestVerifyWebhook(t *testing.T) {
 	}
 	if _, err := NewClient(Config{}).Webhooks().Verify(body, h); !errors.Is(err, ErrWebhookMissingSecret) {
 		t.Fatalf("no secret err = %v", err)
+	}
+}
+
+func TestTransactionalRecipientCap(t *testing.T) {
+	c, got := server(t, [2]string{"200", `{"success":true}`})
+	many := make([]string, MaxTransactionalRecipients+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("u%d@example.com", i)
+	}
+	_, err := c.Email().SendEmail(context.Background(), EmailOptions{From: "a@metigan.io", Recipients: many,
+		Subject: "s", Content: "c", Type: EmailTypeTransactional})
+	var v *ValidationError
+	if !errors.As(err, &v) || v.Field != "recipients" || len(*got) != 0 {
+		t.Fatalf("err = %v, requests = %d", err, len(*got))
+	}
+	if _, err := c.Email().SendEmail(context.Background(), EmailOptions{From: "a@metigan.io", Recipients: many,
+		Subject: "s", Content: "c", Type: EmailTypeMarketing}); err != nil {
+		t.Fatalf("marketing to many: %v", err)
 	}
 }
